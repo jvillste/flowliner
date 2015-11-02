@@ -66,23 +66,29 @@
                                [0.8 0.8 0.8 1]
                                [1 1 1 1])))))
 
-(defn node-view [node]
-  (println "node" node)
-  (text-editor {:text (:flowliner.node/text node)}))
+(defn node-view [node change-channel]
+  (text-editor {:text (:flowliner.node/text node)
+                :on-change (let [channel (async/chan)]
+                             (async/go-loop []
+                               (when-let [new-text (async/<! channel)]
+                                 (async/>! change-channel
+                                           [(:db/id node) new-text])
+                                 (recur)))
+                             channel)}))
 
-(defn node-tree [node]
-  (println "tree" node)
+(defn node-tree [node change-channel]
   (l/vertically
-   (node-view node)
+   (node-view node change-channel)
    (when (:flowliner.node/children node)
      (l/margin 0 0 0 10
                (l/vertically
                 (for-all [node (data/get-children node)]
-                         (node-tree node)))))))
+                         (node-tree node change-channel)))))))
 
 (gui/def-control outliner
   ([view-context control-channel]
-     (let [conn (data/create-database)
+     (let [change-channel (async/chan)
+           conn (data/create-database)
            parent (data/create-node "root" conn)
            child (data/create-node "child" conn)]
 
@@ -91,13 +97,31 @@
          [(data/set-root parent)
           (data/add-child parent child)])
 
-       (conj {:conn conn}
+       (async/go-loop []
+         (async/alt! control-channel ([_] (println "exiting change process"))
+                     change-channel ([[id text]]
+                                       (d/transact conn
+                                                   [(data/set-text id text)])
+                                       (recur))))
+       
+       (let [tx-report-queue (d/tx-report-queue conn)]
+         (.start (Thread. (fn []
+                            (loop [report (.take tx-report-queue)]
+                              (println "queue" (d/q '[:find ?a ?b ?c ?d
+                                                      :where [?a ?b ?c ?d]]
+                                                    (:tx-data report)))
+                              (recur (.take tx-report-queue)))))))
+
+
+       (conj {:conn conn
+              :change-channel change-channel}
              gui/child-focus-handlers)))
 
-  ([view-context {:keys [conn]}]
+  ([view-context {:keys [conn change-channel]}]
      (let [db (d/db conn)
            root (data/get-root db)]
-       (node-tree (d/entity db root)))))
+       (node-tree (d/entity db root)
+                  change-channel))))
 
 (defn start []
   (gui/start-view #'create-outliner #'outliner-view)
@@ -106,3 +130,10 @@
                        (gui/start-view #'create-photo-archive-browser #'photo-archive-browser-view)))))
 
 (gui/redraw-last-started-view)
+
+(d/q '[:find [?a ...]
+       :where [?a :likes _]]
+
+     '[[sally :age 21]
+       [fred :likes [pizza sushi]]
+       [foo :likes [bar baz]]])

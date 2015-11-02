@@ -6,4 +6,4 @@
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [flow-gl/flow-gl "1.0.0-SNAPSHOT"]
                  [org.clojure/core.async "0.1.278.0-76b25b-alpha"]
-                 [com.datomic/datomic-free "0.8.4020.24"]])
+                 [com.datomic/datomic-free "0.9.5067"]])
